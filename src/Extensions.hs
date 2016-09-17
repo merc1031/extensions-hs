@@ -102,8 +102,8 @@ parseInner exts l = do
         fixedLanguagePragmas = concatMap fixLanguagePragma languagePragmas
     return $ pragmasToBSC ((S.toList $ S.fromList (fixedLanguagePragmas <> exts)) <> otherPragmas)
 
-pragmasToBSC :: [HaskellPragma] -> BSC.ByteString -- snoc
-pragmasToBSC pragmas = mconcat $ catMaybes $ map (\p -> (\x -> x <> "\n") <$> unPragma p) pragmas
+pragmasToBSC :: [HaskellPragma] -> BSC.ByteString
+pragmasToBSC pragmas = mconcat $ catMaybes $ map (\p -> (flip BSC.snoc '\n') <$> unPragma p) pragmas
 
 parser :: Parser [HaskellPragma]
 parser = do
@@ -113,10 +113,13 @@ parser = do
     eof
     return allPragma
 
+pragmaDirective :: BSC.ByteString -> BSC.ByteString
+pragmaDirective l = "{-# " <> l <> " #-}"
+
 unPragma :: HaskellPragma -> Maybe BSC.ByteString
-unPragma (LanguagePragma b) = Just b
+unPragma (LanguagePragma b) = Just $ pragmaDirective ("LANGUAGE " <> b)
 unPragma (LanguagePragmaList _) = Nothing
-unPragma (OtherPragma b) = Just b
+unPragma (OtherPragma b) = Just $ pragmaDirective b
 
 isLanguagePragma :: HaskellPragma -> Bool
 isLanguagePragma (LanguagePragma _) = True
@@ -147,7 +150,7 @@ otherPragma = do
                         t <- many (letterChar <|> (oneOf ['_','-']))
                         space
                         v <- many (letterChar <|> digitChar <|> (oneOf ['_','-']))
-                        return $ t <> v)
+                        return $ t <> " " <> v)
     return $ OtherPragma $ BSC.pack prag
 
 languagePragma :: Parser HaskellPragma
