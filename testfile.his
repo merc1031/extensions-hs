@@ -1,0 +1,11 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveFunctor,
+             DeriveAnyClass, MultiWayIf
+             #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# OPTIONS_GHC -fdefer-type-errors #-}
+module X where
+
+def = def
+x = x
+
