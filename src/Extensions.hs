@@ -1,11 +1,16 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Extensions where
 
 import GHC.Generics
 import Text.Megaparsec
 
+import Control.Exception                    ( IOException
+                                            , catch
+                                            )
 import Control.Monad                        ( forM
                                             , liftM
                                             , void
@@ -41,6 +46,14 @@ data HaskellPragma = LanguagePragma BSC.ByteString
 data Operation = RemoveFromFiles
                | AddToFiles
                deriving (Read, Show, Generic)
+
+data Analysis = CountNonDefault
+              deriving (Read, Show, Generic)
+
+data ParsedHeader = ParsedHeader
+  { pragmas :: [HaskellPragma]
+  , rest :: BSC.ByteString
+  }
 
 exampleString :: BSC.ByteString
 exampleString = [str|{-# LANGUAGE OverloadedStrings #-}
@@ -87,6 +100,41 @@ defaultExtensions = [ LanguagePragma "OverloadedStrings"
                     , LanguagePragma "MultiWayIf"
                     ]
 
+analyzeContent :: Analysis
+               -> [HaskellPragma]
+               -> BSC.ByteString
+               -> BSC.ByteString
+analyzeContent an exts contents =
+    let (l,rest) = BSC.breakSubstring "module" contents
+    in case go l of
+         Left _ -> BSC.pack $ show 0
+         Right r ->  r
+    where go l = do
+            ParsedHeader {..} <- parse parser "" l
+
+            let (languagePragmas, otherPragmas) = partition (isLanguagePragma) pragmas
+                fixedLanguagePragmas = concatMap fixLanguagePragma languagePragmas
+            return $ case an of
+                      CountNonDefault -> BSC.pack $ show $ length (S.toList $ (S.fromList fixedLanguagePragmas S.\\ S.fromList exts))
+  
+analyze :: Analysis
+        -> [HaskellPragma]
+        -> FilePath
+        -> IO ()
+analyze an exts f = do
+  putStrLn $ ("Analyzing: " ++ f)
+  c <- BSC.readFile f
+  BSC.putStrLn $ analyzeContent an exts c
+
+analyzeMany :: Analysis
+            -> [HaskellPragma]
+            -> [FilePath]
+            -> IO ()
+analyzeMany an exts paths = do
+    filess <- forM paths $ find always (extension ==? ".hs")
+    let files = concat filess
+    void $ forM files $ analyze an exts
+
 changeMany :: Operation
            -> [HaskellPragma]
            -> [FilePath]
@@ -105,7 +153,10 @@ changeOneFile = changeExtensions
 modifyInPlace' :: FilePath
                -> (BSC.ByteString -> BSC.ByteString)
                -> IO ()
-modifyInPlace' = flip modifyInPlace
+modifyInPlace' p a = do
+  putStrLn $ ("Modifying: " ++ p)
+  let d = flip modifyInPlace
+  d p a `catch` \((e :: IOException)) -> putStrLn $ ("Error: " ++ show e)
 
 changeExtensions :: Operation
                  -> [HaskellPragma]
@@ -135,25 +186,26 @@ attemptToChangeContents' :: Operation
                          -> BSC.ByteString
                          -> Either (ParseError Char Text.Megaparsec.Dec) BSC.ByteString
 attemptToChangeContents' op exts l = do
-    pragmas <- parse parser "" l
+    ParsedHeader {..} <- parse parser "" l
 
     let (languagePragmas, otherPragmas) = partition (isLanguagePragma) pragmas
         fixedLanguagePragmas = concatMap fixLanguagePragma languagePragmas
     return $ case op of
-      RemoveFromFiles -> pragmasToBSC ((S.toList $ (S.fromList fixedLanguagePragmas S.\\ S.fromList exts)) <> otherPragmas)
-      AddToFiles -> pragmasToBSC ((S.toList $ S.fromList (fixedLanguagePragmas <> exts)) <> otherPragmas)
+      RemoveFromFiles -> (pragmasToBSC ((S.toList $ (S.fromList fixedLanguagePragmas S.\\ S.fromList exts)) <> otherPragmas)) <> rest
+      AddToFiles -> (pragmasToBSC ((S.toList $ S.fromList (fixedLanguagePragmas <> exts)) <> otherPragmas)) <> rest
 
 pragmasToBSC :: [HaskellPragma]
              -> BSC.ByteString
 pragmasToBSC pragmas = mconcat $ catMaybes $ map (\p -> (flip BSC.snoc '\n') <$> unPragma p) pragmas
 
-parser :: Parser [HaskellPragma]
+parser :: Parser ParsedHeader
 parser = do
     space
     allPragma <- allPragmas
+    rest <- BSC.pack <$> many anyChar
     space
     eof
-    return allPragma
+    return $ ParsedHeader { pragmas = allPragma, rest = rest }
 
 pragmaDirective :: BSC.ByteString
                 -> BSC.ByteString
@@ -194,7 +246,7 @@ otherPragma = do
                     (do
                         t <- many (letterChar <|> (oneOf ['_','-']))
                         space
-                        v <- many (letterChar <|> digitChar <|> (oneOf ['_','-']))
+                        v <- many (letterChar <|> digitChar <|> (oneOf ['_','-']) <|> spaceChar)
                         return $ t <> " " <> v)
     return $ OtherPragma $ BSC.pack prag
 
