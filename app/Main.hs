@@ -17,6 +17,7 @@ data AllArgs = AllArgs {
   , folders :: [FilePath]
   , text :: Maybe BSC.ByteString
   , extensions :: [InHaskellPragma]
+  , operation :: Operation
   } deriving (Generic)
 
 newtype InHaskellPragma = InHaskellPragma { unInHaskellPragma :: HaskellPragma }
@@ -25,19 +26,22 @@ newtype InHaskellPragma = InHaskellPragma { unInHaskellPragma :: HaskellPragma }
 instance ParseRecord AllArgs
 
 instance ParseField InHaskellPragma
+instance ParseFields Operation
+instance ParseField Operation
+instance ParseRecord Operation
 
 main :: IO ()
 main = getRecord "Pop" >>= \args -> do
   let exts = case (map unInHaskellPragma $ extensions args) of
           [] -> defaultExtensions
           xs -> xs
-  go args exts
-  where go args exts
-          | Just f <- file args = changeExtensions exts f
+  go (operation args) args exts
+  where go op args exts
+          | Just f <- file args = changeExtensions op exts f
           | fs <- folders args
-          , True <- [] /= fs = changeMany exts fs
+          , True <- [] /= fs = changeMany op exts fs
           | Just content <- text args = do
-                let res = changeContent exts content
+                let res = changeContent op exts content
                 print res
                 return ()
           | otherwise = return ()

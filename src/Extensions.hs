@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 module Extensions where
@@ -6,6 +7,7 @@ import Control.Monad (forM, liftM, void)
 import Data.List (partition)
 import Data.Maybe (fromJust, catMaybes)
 import Data.Monoid ((<>), mconcat)
+import GHC.Generics
 import System.FilePath.Find (find, filePath, (==?), extension, always)
 import System.FilePath.Manip (modifyInPlace)
 import Text.Megaparsec
@@ -22,6 +24,8 @@ data HaskellPragma = LanguagePragma BSC.ByteString
                    | OtherPragma BSC.ByteString
                    deriving (Eq, Ord, Show, Read)
 
+data Operation = RemoveFromFiles | AddToFiles
+    deriving (Read, Show, Generic)
 
 exampleString :: BSC.ByteString
 exampleString = [str|{-# LANGUAGE OverloadedStrings #-}
@@ -68,39 +72,41 @@ defaultExtensions = [ LanguagePragma "OverloadedStrings"
                     , LanguagePragma "MultiWayIf"
                     ]
 
-changeMany :: [HaskellPragma] -> [FilePath] -> IO ()
-changeMany exts paths = do
+changeMany :: Operation -> [HaskellPragma] -> [FilePath] -> IO ()
+changeMany op exts paths = do
     filess <- forM paths $ find always (extension ==? ".hs")
     let files = concat filess
-    void $ forM files $ changeOneFile exts
+    void $ forM files $ changeOneFile op exts
 
-changeOneFile :: [HaskellPragma] -> FilePath -> IO ()
+changeOneFile :: Operation -> [HaskellPragma] -> FilePath -> IO ()
 changeOneFile = changeExtensions
 
 modifyInPlace' :: FilePath -> (BSC.ByteString -> BSC.ByteString) -> IO ()
 modifyInPlace' = flip modifyInPlace
 
-changeExtensions :: [HaskellPragma] -> FilePath -> IO ()
-changeExtensions exts f = modifyInPlace' f (changeContent exts)
+changeExtensions :: Operation -> [HaskellPragma] -> FilePath -> IO ()
+changeExtensions op exts f = modifyInPlace' f (changeContent op exts)
 
-changeContent :: [HaskellPragma] -> BSC.ByteString -> BSC.ByteString
-changeContent exts contents =
-    case parseIt exts contents of
+changeContent :: Operation -> [HaskellPragma] -> BSC.ByteString -> BSC.ByteString
+changeContent op exts contents =
+    case attemptToChangeContents op exts contents of
         Left _ -> contents
         Right r -> r
 
-parseIt :: [HaskellPragma] -> BSC.ByteString -> Either (ParseError Char Text.Megaparsec.Dec) BSC.ByteString
-parseIt exts contents =
+attemptToChangeContents :: Operation -> [HaskellPragma] -> BSC.ByteString -> Either (ParseError Char Text.Megaparsec.Dec) BSC.ByteString
+attemptToChangeContents op exts contents =
     let (l,rest) = BSC.breakSubstring "module" contents
-    in (\x -> return $ x <> rest) =<< (parseInner exts l)
+    in (\x -> return $ x <> rest) =<< (attemptToChangeContents' op exts l)
 
-parseInner :: [HaskellPragma] -> BSC.ByteString -> Either (ParseError Char Text.Megaparsec.Dec) BSC.ByteString
-parseInner exts l = do
+attemptToChangeContents' :: Operation -> [HaskellPragma] -> BSC.ByteString -> Either (ParseError Char Text.Megaparsec.Dec) BSC.ByteString
+attemptToChangeContents' op exts l = do
     pragmas <- parse parser "" l
 
     let (languagePragmas, otherPragmas) = partition (isLanguagePragma) pragmas
         fixedLanguagePragmas = concatMap fixLanguagePragma languagePragmas
-    return $ pragmasToBSC ((S.toList $ S.fromList (fixedLanguagePragmas <> exts)) <> otherPragmas)
+    return $ case op of
+      RemoveFromFiles -> pragmasToBSC ((S.toList $ (S.fromList fixedLanguagePragmas S.\\ S.fromList exts)) <> otherPragmas)
+      AddToFiles -> pragmasToBSC ((S.toList $ S.fromList (fixedLanguagePragmas <> exts)) <> otherPragmas)
 
 pragmasToBSC :: [HaskellPragma] -> BSC.ByteString
 pragmasToBSC pragmas = mconcat $ catMaybes $ map (\p -> (flip BSC.snoc '\n') <$> unPragma p) pragmas
