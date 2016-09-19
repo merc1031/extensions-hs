@@ -3,19 +3,33 @@
 {-# LANGUAGE QuasiQuotes #-}
 module Extensions where
 
-import Control.Monad (forM, liftM, void)
-import Data.List (partition)
-import Data.Maybe (fromJust, catMaybes)
-import Data.Monoid ((<>), mconcat)
 import GHC.Generics
-import System.FilePath.Find (find, filePath, (==?), extension, always)
-import System.FilePath.Manip (modifyInPlace)
 import Text.Megaparsec
 
-import Str (str)
+import Control.Monad                        ( forM
+                                            , liftM
+                                            , void
+                                            )
+import Data.List                            ( partition )
+import Data.Maybe                           ( fromJust
+                                            , catMaybes
+                                            )
+import Data.Monoid                          ( (<>)
+                                            , mconcat
+                                            )
+import System.FilePath.Find                 ( find
+                                            , filePath
+                                            , (==?)
+                                            , extension
+                                            , always
+                                            )
+import System.FilePath.Manip                ( modifyInPlace )
 
-import qualified Data.Set as S
-import qualified Data.ByteString.Char8 as BSC
+import qualified Data.Set                   as S
+import qualified Data.ByteString.Char8      as BSC
+
+
+import Str                                  ( str )
 
 type Parser = Parsec Dec BSC.ByteString
 
@@ -24,8 +38,9 @@ data HaskellPragma = LanguagePragma BSC.ByteString
                    | OtherPragma BSC.ByteString
                    deriving (Eq, Ord, Show, Read)
 
-data Operation = RemoveFromFiles | AddToFiles
-    deriving (Read, Show, Generic)
+data Operation = RemoveFromFiles
+               | AddToFiles
+               deriving (Read, Show, Generic)
 
 exampleString :: BSC.ByteString
 exampleString = [str|{-# LANGUAGE OverloadedStrings #-}
@@ -72,33 +87,53 @@ defaultExtensions = [ LanguagePragma "OverloadedStrings"
                     , LanguagePragma "MultiWayIf"
                     ]
 
-changeMany :: Operation -> [HaskellPragma] -> [FilePath] -> IO ()
+changeMany :: Operation
+           -> [HaskellPragma]
+           -> [FilePath]
+           -> IO ()
 changeMany op exts paths = do
     filess <- forM paths $ find always (extension ==? ".hs")
     let files = concat filess
     void $ forM files $ changeOneFile op exts
 
-changeOneFile :: Operation -> [HaskellPragma] -> FilePath -> IO ()
+changeOneFile :: Operation
+              -> [HaskellPragma]
+              -> FilePath
+              -> IO ()
 changeOneFile = changeExtensions
 
-modifyInPlace' :: FilePath -> (BSC.ByteString -> BSC.ByteString) -> IO ()
+modifyInPlace' :: FilePath
+               -> (BSC.ByteString -> BSC.ByteString)
+               -> IO ()
 modifyInPlace' = flip modifyInPlace
 
-changeExtensions :: Operation -> [HaskellPragma] -> FilePath -> IO ()
+changeExtensions :: Operation
+                 -> [HaskellPragma]
+                 -> FilePath
+                 -> IO ()
 changeExtensions op exts f = modifyInPlace' f (changeContent op exts)
 
-changeContent :: Operation -> [HaskellPragma] -> BSC.ByteString -> BSC.ByteString
+changeContent :: Operation
+              -> [HaskellPragma]
+              -> BSC.ByteString
+              -> BSC.ByteString
 changeContent op exts contents =
     case attemptToChangeContents op exts contents of
         Left _ -> contents
         Right r -> r
 
-attemptToChangeContents :: Operation -> [HaskellPragma] -> BSC.ByteString -> Either (ParseError Char Text.Megaparsec.Dec) BSC.ByteString
+attemptToChangeContents :: Operation
+                        -> [HaskellPragma]
+                        -> BSC.ByteString
+                        -> Either (ParseError Char Text.Megaparsec.Dec) BSC.ByteString
 attemptToChangeContents op exts contents =
     let (l,rest) = BSC.breakSubstring "module" contents
     in (\x -> return $ x <> rest) =<< (attemptToChangeContents' op exts l)
 
-attemptToChangeContents' :: Operation -> [HaskellPragma] -> BSC.ByteString -> Either (ParseError Char Text.Megaparsec.Dec) BSC.ByteString
+attemptToChangeContents' :: Operation
+                         -> [HaskellPragma]
+                         -> BSC.ByteString
+                         -> Either (ParseError Char Text.Megaparsec.Dec) BSC.ByteString
 attemptToChangeContents' op exts l = do
     pragmas <- parse parser "" l
 
@@ -108,7 +143,8 @@ attemptToChangeContents' op exts l = do
       RemoveFromFiles -> pragmasToBSC ((S.toList $ (S.fromList fixedLanguagePragmas S.\\ S.fromList exts)) <> otherPragmas)
       AddToFiles -> pragmasToBSC ((S.toList $ S.fromList (fixedLanguagePragmas <> exts)) <> otherPragmas)
 
-pragmasToBSC :: [HaskellPragma] -> BSC.ByteString
+pragmasToBSC :: [HaskellPragma]
+             -> BSC.ByteString
 pragmasToBSC pragmas = mconcat $ catMaybes $ map (\p -> (flip BSC.snoc '\n') <$> unPragma p) pragmas
 
 parser :: Parser [HaskellPragma]
@@ -119,15 +155,18 @@ parser = do
     eof
     return allPragma
 
-pragmaDirective :: BSC.ByteString -> BSC.ByteString
+pragmaDirective :: BSC.ByteString
+                -> BSC.ByteString
 pragmaDirective l = "{-# " <> l <> " #-}"
 
-unPragma :: HaskellPragma -> Maybe BSC.ByteString
+unPragma :: HaskellPragma
+         -> Maybe BSC.ByteString
 unPragma (LanguagePragma b) = Just $ pragmaDirective ("LANGUAGE " <> b)
 unPragma (LanguagePragmaList _) = Nothing
 unPragma (OtherPragma b) = Just $ pragmaDirective b
 
-isLanguagePragma :: HaskellPragma -> Bool
+isLanguagePragma :: HaskellPragma
+                 -> Bool
 isLanguagePragma (LanguagePragma _) = True
 isLanguagePragma (LanguagePragmaList _) = True
 isLanguagePragma _ = False
@@ -171,7 +210,8 @@ languagePragma = do
                     )
     return $ LanguagePragma $ BSC.pack prag
 
-bstring :: String -> Parser String
+bstring :: String
+        -> Parser String
 bstring = tokens (==)
 
 languagePragmaList :: Parser HaskellPragma
@@ -189,7 +229,8 @@ languagePragmaList = do
                     )
     return $ LanguagePragmaList prag
 
-fixLanguagePragma :: HaskellPragma -> [HaskellPragma]
+fixLanguagePragma :: HaskellPragma
+                  -> [HaskellPragma]
 fixLanguagePragma (LanguagePragmaList p) = map LanguagePragma p
 fixLanguagePragma x = [x]
 
