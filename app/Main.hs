@@ -56,7 +56,7 @@ main = getRecord "Pop" >>= \(args@(AllArgs {..})) -> do
   where go (AllArgs {..}) exts
           | Just f <- file = if
                                 | Just op <- operation -> changeExtensions op exts f
-                                | Just an <- analysis -> analyze an exts f
+                                | Just an <- analysis -> analyze (BSC.putStrLn . BSC.pack . show) an exts f
           | fs <- folders
           , True <- [] /= fs = if
                                   | Just op <- operation -> changeMany op exts fs

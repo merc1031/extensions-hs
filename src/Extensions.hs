@@ -3,6 +3,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 module Extensions where
 
 import GHC.Generics
@@ -15,6 +16,7 @@ import Control.Monad                        ( forM
                                             , liftM
                                             , void
                                             )
+import Data.Foldable                        ( foldrM )
 import Data.List                            ( partition )
 import Data.Maybe                           ( fromJust
                                             , catMaybes
@@ -30,6 +32,7 @@ import System.FilePath.Find                 ( find
                                             )
 import System.FilePath.Manip                ( modifyInPlace )
 
+import qualified Data.Map.Strict            as M
 import qualified Data.Set                   as S
 import qualified Data.ByteString.Char8      as BSC
 
@@ -48,6 +51,7 @@ data Operation = RemoveFromFiles
                deriving (Read, Show, Generic)
 
 data Analysis = CountNonDefault
+              | ExtensionCount
               deriving (Read, Show, Generic)
 
 data ParsedHeader = ParsedHeader
@@ -103,11 +107,11 @@ defaultExtensions = [ LanguagePragma "OverloadedStrings"
 analyzeContent :: Analysis
                -> [HaskellPragma]
                -> BSC.ByteString
-               -> BSC.ByteString
+               -> M.Map BSC.ByteString Int
 analyzeContent an exts contents =
     let (l,rest) = BSC.breakSubstring "module" contents
     in case go l of
-         Left _ -> BSC.pack $ show 0
+         Left _ -> M.singleton "No Analysis" 0
          Right r ->  r
     where go l = do
             ParsedHeader {..} <- parse parser "" l
@@ -115,16 +119,23 @@ analyzeContent an exts contents =
             let (languagePragmas, otherPragmas) = partition (isLanguagePragma) pragmas
                 fixedLanguagePragmas = concatMap fixLanguagePragma languagePragmas
             return $ case an of
-                      CountNonDefault -> BSC.pack $ show $ length (S.toList $ (S.fromList fixedLanguagePragmas S.\\ S.fromList exts))
+                      CountNonDefault -> M.singleton ("Non Default") (length (S.toList $ (S.fromList fixedLanguagePragmas S.\\ S.fromList exts)))
+                      ExtensionCount -> let uniqs = (S.toList $ (S.fromList fixedLanguagePragmas S.\\ S.fromList exts))
+                                            prs = map ((,1)) $ catMaybes $ map unPragma uniqs
+                                        in M.fromList prs
   
-analyze :: Analysis
+analyze :: (M.Map BSC.ByteString Int -> IO b)
+        -> Analysis
         -> [HaskellPragma]
         -> FilePath
-        -> IO ()
-analyze an exts f = do
+        -> IO b
+analyze r an exts f = do
   putStrLn $ ("Analyzing: " ++ f)
   c <- BSC.readFile f
-  BSC.putStrLn $ analyzeContent an exts c
+  let result = analyzeContent an exts c
+  r result
+
+foldrM' acc t f = foldrM f acc t
 
 analyzeMany :: Analysis
             -> [HaskellPragma]
@@ -133,7 +144,14 @@ analyzeMany :: Analysis
 analyzeMany an exts paths = do
     filess <- forM paths $ find always (extension ==? ".hs")
     let files = concat filess
-    void $ forM files $ analyze an exts
+    case an of
+      CountNonDefault -> 
+        void $ forM files $ analyze (BSC.putStrLn . BSC.pack . show) an exts
+      ExtensionCount -> do
+        fr <- foldrM' M.empty files $ \file acc -> do
+          res <- analyze (return) an exts file
+          return $ M.unionWith ((+)) res acc
+        BSC.putStrLn . BSC.pack . show $ fr
 
 changeMany :: Operation
            -> [HaskellPragma]
