@@ -26,7 +26,7 @@ data AllArgs = AllArgs {
   } deriving (Generic)
 
 newtype InHaskellPragma = InHaskellPragma { unInHaskellPragma :: HaskellPragma }
-  deriving (Read)
+  deriving (Read, Show)
 
 instance ParseRecord AllArgs
 
@@ -44,6 +44,9 @@ main = getRecord "Pop" >>= \(args@(AllArgs {..})) -> do
           [] -> defaultExtensions
           xs -> xs
 
+
+  print exts
+
   when (isJust operation && isJust analysis) $ do
     putStrLn "Cannot specify both operation and analyis"
     exitFailure
@@ -59,7 +62,9 @@ main = getRecord "Pop" >>= \(args@(AllArgs {..})) -> do
                                 | Just an <- analysis -> analyze (BSC.putStrLn . BSC.pack . show) an exts f
           | fs <- folders
           , True <- [] /= fs = if
-                                  | Just op <- operation -> changeMany op exts fs
+                                  | Just op <- operation -> do
+                                      print op
+                                      changeMany op exts fs
                                   | Just an <- analysis -> analyzeMany an exts fs
           | Just content <- text = if
                                       | Just op <- operation -> do

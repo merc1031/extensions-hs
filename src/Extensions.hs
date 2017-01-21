@@ -36,6 +36,8 @@ import qualified Data.Map.Strict            as M
 import qualified Data.Set                   as S
 import qualified Data.ByteString.Char8      as BSC
 
+import Debug.Trace
+
 
 import Str                                  ( str )
 
@@ -57,7 +59,7 @@ data Analysis = CountNonDefault
 data ParsedHeader = ParsedHeader
   { pragmas :: [HaskellPragma]
   , rest :: BSC.ByteString
-  }
+  } deriving Show
 
 exampleString :: BSC.ByteString
 exampleString = [str|{-# LANGUAGE OverloadedStrings #-}
@@ -188,8 +190,8 @@ changeContent :: Operation
               -> BSC.ByteString
 changeContent op exts contents =
     case attemptToChangeContents op exts contents of
-        Left _ -> contents
-        Right r -> r
+        ll@(Left _) -> contents
+        rr@(Right r) -> r
 
 attemptToChangeContents :: Operation
                         -> [HaskellPragma]
@@ -208,9 +210,10 @@ attemptToChangeContents' op exts l = do
 
     let (languagePragmas, otherPragmas) = partition (isLanguagePragma) pragmas
         fixedLanguagePragmas = concatMap fixLanguagePragma languagePragmas
+        flattened = concatMap fixLanguagePragma exts
     return $ case op of
-      RemoveFromFiles -> (pragmasToBSC ((S.toList $ (S.fromList fixedLanguagePragmas S.\\ S.fromList exts)) <> otherPragmas)) <> rest
-      AddToFiles -> (pragmasToBSC ((S.toList $ S.fromList (fixedLanguagePragmas <> exts)) <> otherPragmas)) <> rest
+      RemoveFromFiles -> (pragmasToBSC ((S.toList $ (S.fromList fixedLanguagePragmas S.\\ S.fromList flattened)) <> otherPragmas)) <> rest
+      AddToFiles -> (pragmasToBSC ((S.toList $ S.fromList (fixedLanguagePragmas <> flattened)) <> otherPragmas)) <> rest
 
 pragmasToBSC :: [HaskellPragma]
              -> BSC.ByteString
@@ -232,7 +235,7 @@ pragmaDirective l = "{-# " <> l <> " #-}"
 unPragma :: HaskellPragma
          -> Maybe BSC.ByteString
 unPragma (LanguagePragma b) = Just $ pragmaDirective ("LANGUAGE " <> b)
-unPragma (LanguagePragmaList _) = Nothing
+unPragma (LanguagePragmaList l) = Nothing
 unPragma (OtherPragma b) = Just $ pragmaDirective b
 
 isLanguagePragma :: HaskellPragma
